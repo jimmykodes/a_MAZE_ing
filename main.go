@@ -1,10 +1,9 @@
 package main
 
 import (
+	"flag"
 	"fmt"
 	"math/rand"
-	"os"
-	"strconv"
 	"time"
 
 	"github.com/jimmykodes/a_MAZE_ing/internal/field"
@@ -12,38 +11,52 @@ import (
 )
 
 var (
-	width     = 10
-	height    = 10
-	startSide = field.Top
-	out       = output.Text
+	width      int
+	height     int
+	seed       int64
+	outputType string
+	startSide  string
+	animate    bool
 )
 
 func main() {
-	rand.Seed(time.Now().Unix())
-	a := os.Args[1:]
-	switch len(a) {
-	case 1:
-		b, err := strconv.Atoi(a[0])
-		if err != nil {
-			fmt.Println("invalid input, must be a number")
-			return
-		}
-		width = b
-		height = b
-	case 2:
-		var err error
-		width, err = strconv.Atoi(a[0])
-		if err != nil {
-			fmt.Println("invalid input, must be a number")
-			return
-		}
-		height, err = strconv.Atoi(a[1])
-		if err != nil {
-			fmt.Println("invalid input, must be a number")
-			return
-		}
+	flag.BoolVar(&animate, "animate", false, "animate generation process")
+	flag.StringVar(&startSide, "start", "t", "side of maze to start on [t | b | l | r]")
+	flag.StringVar(&outputType, "output", "image", "output type [image | text]")
+	flag.IntVar(&width, "width", 10, "maze width")
+	flag.IntVar(&height, "height", 10, "maze height")
+	flag.Int64Var(&seed, "seed", time.Now().Unix(), "maze seed value")
+	flag.Parse()
+	rand.Seed(seed)
+	var ss field.Side
+	switch startSide {
+	case "t", "top":
+		ss = field.Top
+	case "b", "bottom":
+		ss = field.Bottom
+	case "l", "left":
+		ss = field.Left
+	case "r", "right":
+		ss = field.Right
+	default:
+		fmt.Println("invalid start side")
+		return
 	}
-	maze := field.New(width, height, startSide, out, true)
+
+	var out output.Output
+	switch outputType {
+	case "image":
+		out = output.Image
+	case "text":
+		out = output.Text
+	}
+
+	maze := field.New(width, height, ss, out, animate)
 	maze.Gen()
-	fmt.Println(maze)
+	maze.WriteText()
+	err := maze.WriteImage("maze.png")
+	if err != nil {
+		fmt.Println("error saving maze", err)
+		return
+	}
 }

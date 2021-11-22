@@ -2,6 +2,10 @@ package field
 
 import (
 	"fmt"
+	"image"
+	"image/color"
+	"image/gif"
+	"image/png"
 	"math/rand"
 	"os"
 	"strings"
@@ -23,6 +27,8 @@ const (
 	Bottom
 )
 
+var red = color.RGBA{R: 255, G: 0, B: 0, A: 255}
+
 type Field struct {
 	Width     int
 	Height    int
@@ -34,6 +40,7 @@ type Field struct {
 	current   *node.Node
 	cursor    *cursor.Cursor
 	Nodes     [][]*node.Node
+	frames    []*image.Paletted
 }
 
 func New(width, height int, startSide Side, out output.Output, animate bool) *Field {
@@ -44,9 +51,7 @@ func New(width, height int, startSide Side, out output.Output, animate bool) *Fi
 		Animate:   animate,
 		StartSide: startSide,
 	}
-	if out == output.Text {
-		f.cursor = cursor.New(os.Stdout)
-	}
+	f.cursor = cursor.New(os.Stdout)
 	switch startSide {
 	case Left:
 		f.Start = &node.Node{X: 0, Y: rand.Intn(height), IsStart: true}
@@ -77,13 +82,13 @@ func New(width, height int, startSide Side, out output.Output, animate bool) *Fi
 	return f
 }
 
-func (f Field) Gen() {
+func (f *Field) Gen() {
 	f.current = f.Start
 	f.dfs()
 }
 
 // dfs is a depth-first-search maze generation method
-func (f Field) dfs() {
+func (f *Field) dfs() {
 	var (
 		available = make([]*node.Node, 4)
 		count     = 0
@@ -99,7 +104,25 @@ func (f Field) dfs() {
 	for {
 		f.current.Visited = true
 		if f.Animate {
-			if f.Output == output.Text {
+			switch f.Output {
+			case output.Image:
+				once.Do(func() {
+					deferFunc = func() {
+						gifFile, err := os.Create("maze.gif")
+						if err != nil {
+							fmt.Println("error saving animation", err)
+							return
+						}
+						defer gifFile.Close()
+						delays := make([]int, len(f.frames))
+						anim := &gif.GIF{Image: f.frames, Delay: delays}
+						if err := gif.EncodeAll(gifFile, anim); err != nil {
+							fmt.Println("error saving animation", err)
+							return
+						}
+					}
+				})
+			case output.Text:
 				once.Do(func() {
 					f.cursor.AltBuffer()
 					f.cursor.Hide()
@@ -113,8 +136,11 @@ func (f Field) dfs() {
 				} else {
 					init = true
 				}
-				f.WriteFrame()
 				time.Sleep(time.Second / 60)
+			}
+			if err := f.WriteFrame(); err != nil {
+				fmt.Println("error generating frame", err)
+				return
 			}
 		}
 
@@ -168,7 +194,7 @@ func (f Field) dfs() {
 	}
 }
 
-func (f Field) Repr() [][]uint8 {
+func (f *Field) Repr() [][]uint8 {
 	repr := make([][]uint8, (f.Height*2)+1)
 	for i := 0; i < (f.Height*2)+1; i++ {
 		repr[i] = make([]uint8, (f.Width*2)+1)
@@ -234,28 +260,72 @@ func (f Field) Repr() [][]uint8 {
 	return repr
 }
 
-func (f Field) WriteFrame() {
-	if f.Output == output.Text {
-		r := f.Repr()
-		for _, row := range r {
-			for _, col := range row {
-				switch col {
-				case 0:
-					f.cursor.WhiteBG()
-				case 1:
-					f.cursor.BlackBG()
-				case 2:
-					f.cursor.RedBG()
-				}
-				fmt.Print("  ")
-				f.cursor.Clear()
-			}
-			fmt.Println()
-		}
+func (f *Field) WriteFrame() error {
+	switch f.Output {
+	case output.Text:
+		f.WriteText()
+		return nil
+	case output.Image:
+		f.frames = append(f.frames, f.genImage())
+		return nil
+	default:
+		return fmt.Errorf("invalid output type")
 	}
 }
 
-func (f Field) String() string {
+func (f *Field) WriteImage(name string) error {
+	img := f.genImage()
+	imgFile, err := os.Create(name)
+	if err != nil {
+		return err
+	}
+	defer imgFile.Close()
+	return png.Encode(imgFile, img)
+}
+
+func (f *Field) genImage() *image.Paletted {
+	r := f.Repr()
+	img := image.NewPaletted(
+		image.Rect(0, 0, (f.Width*2)+1, (f.Height*2)+1),
+		color.Palette{color.White, color.Black, red},
+	)
+	for y, row := range r {
+		for x, col := range row {
+			var c color.Color
+			switch col {
+			case 0:
+				c = color.Black
+			case 1:
+				c = color.White
+			case 2:
+				c = color.RGBA{R: 255, G: 0, B: 0, A: 255}
+			}
+			img.Set(x, y, c)
+		}
+	}
+	return img
+}
+
+func (f *Field) WriteText() {
+	r := f.Repr()
+	for _, row := range r {
+		for _, col := range row {
+			switch col {
+			case 0:
+				f.cursor.WhiteBG()
+			case 1:
+				f.cursor.BlackBG()
+			case 2:
+				f.cursor.RedBG()
+			}
+			fmt.Print("  ")
+			f.cursor.Clear()
+		}
+		fmt.Println()
+	}
+}
+
+func (f *Field) String() string {
 	repr := f.Repr()
 	intermediate := make([]string, len(repr))
 	for i, r := range repr {
