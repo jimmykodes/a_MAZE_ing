@@ -41,12 +41,14 @@ type Field struct {
 	cursor    *cursor.Cursor
 	Nodes     [][]*node.Node
 	frames    []*image.Paletted
+	scale     int
 }
 
-func New(width, height int, startSide Side, out output.Output, animate bool) *Field {
+func New(width, height, scale int, startSide Side, out output.Output, animate bool) *Field {
 	f := &Field{
 		Width:     width,
 		Height:    height,
+		scale:     scale,
 		Output:    out,
 		Animate:   animate,
 		StartSide: startSide,
@@ -266,7 +268,7 @@ func (f *Field) WriteFrame() error {
 		f.WriteText()
 		return nil
 	case output.Image:
-		f.frames = append(f.frames, f.genImage())
+		f.frames = append(f.frames, f.genImage(true))
 		return nil
 	default:
 		return fmt.Errorf("invalid output type")
@@ -274,7 +276,7 @@ func (f *Field) WriteFrame() error {
 }
 
 func (f *Field) WriteImage(name string) error {
-	img := f.genImage()
+	img := f.genImage(false)
 	imgFile, err := os.Create(name)
 	if err != nil {
 		return err
@@ -283,10 +285,10 @@ func (f *Field) WriteImage(name string) error {
 	return png.Encode(imgFile, img)
 }
 
-func (f *Field) genImage() *image.Paletted {
+func (f *Field) genImage(colorCurrent bool) *image.Paletted {
 	r := f.Repr()
 	img := image.NewPaletted(
-		image.Rect(0, 0, (f.Width*2)+1, (f.Height*2)+1),
+		image.Rect(0, 0, f.scale*((f.Width*2)+1), f.scale*((f.Height*2)+1)),
 		color.Palette{color.White, color.Black, red},
 	)
 	for y, row := range r {
@@ -298,9 +300,18 @@ func (f *Field) genImage() *image.Paletted {
 			case 1:
 				c = color.White
 			case 2:
-				c = color.RGBA{R: 255, G: 0, B: 0, A: 255}
+				if colorCurrent {
+					c = color.RGBA{R: 255, G: 0, B: 0, A: 255}
+				} else {
+					c = color.White
+				}
 			}
-			img.Set(x, y, c)
+			for i := 0; i < f.scale; i++ {
+				for j := 0; j < f.scale; j++ {
+					img.Set((x*f.scale)+i, (y*f.scale)+j, c)
+				}
+			}
+
 		}
 	}
 	return img
