@@ -9,7 +9,6 @@ import (
 	"math/rand"
 	"os"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/jimmykodes/cursor"
@@ -37,11 +36,17 @@ type Field struct {
 	Output    output.Output
 	Start     *node.Node
 	End       *node.Node
-	current   *node.Node
 	cursor    *cursor.Cursor
 	Nodes     [][]*node.Node
 	frames    []*image.Paletted
 	scale     int
+
+	// current is the node currently being examined in the relevant search algorithm
+	current *node.Node
+
+	// available is used to represent the nodes not visited surrounding the current node each node
+	// can at-most have 3 available sides, since at least one side will be the parent node
+	available [4]*node.Node
 }
 
 func New(width, height, scale int, startSide Side, out output.Output, animate bool) *Field {
@@ -92,11 +97,9 @@ func (f *Field) Gen() {
 // dfs is a depth-first-search maze generation method
 func (f *Field) dfs() {
 	var (
-		available = make([]*node.Node, 4)
 		count     = 0
-		once      sync.Once
 		deferFunc func()
-		init      bool
+		animate   func()
 	)
 	defer func() {
 		if deferFunc != nil {
@@ -106,44 +109,10 @@ func (f *Field) dfs() {
 	for {
 		f.current.Visited = true
 		if f.Animate {
-			switch f.Output {
-			case output.Image:
-				once.Do(func() {
-					deferFunc = func() {
-						gifFile, err := os.Create("maze.gif")
-						if err != nil {
-							fmt.Println("error saving animation", err)
-							return
-						}
-						defer gifFile.Close()
-						delays := make([]int, len(f.frames))
-						anim := &gif.GIF{Image: f.frames, Delay: delays}
-						if err := gif.EncodeAll(gifFile, anim); err != nil {
-							fmt.Println("error saving animation", err)
-							return
-						}
-					}
-				})
-			case output.Text:
-				once.Do(func() {
-					f.cursor.AltBuffer()
-					f.cursor.Hide()
-					deferFunc = func() {
-						f.cursor.OriginalBuffer()
-						f.cursor.Show()
-					}
-				})
-				if init {
-					f.cursor.Up(f.Height*2 + 1)
-				} else {
-					init = true
-				}
-				time.Sleep(time.Second / 60)
+			if animate == nil {
+				animate, deferFunc = f.animator()
 			}
-			if err := f.WriteFrame(); err != nil {
-				fmt.Println("error generating frame", err)
-				return
-			}
+			animate()
 		}
 
 		if f.current.IsEnd {
@@ -151,35 +120,7 @@ func (f *Field) dfs() {
 			continue
 		}
 		// reset count per loop
-		count = 0
-		if f.current.X > 0 {
-			// not in the first column so look left
-			if l := f.Nodes[f.current.Y][f.current.X-1]; !l.Visited {
-				available[count] = l
-				count++
-			}
-		}
-		if f.current.X < f.Width-1 {
-			// not in the last column so look right
-			if r := f.Nodes[f.current.Y][f.current.X+1]; !r.Visited {
-				available[count] = r
-				count++
-			}
-		}
-		if f.current.Y > 0 {
-			// not in the first row, look up
-			if t := f.Nodes[f.current.Y-1][f.current.X]; !t.Visited {
-				available[count] = t
-				count++
-			}
-		}
-		if f.current.Y < f.Height-1 {
-			// not in last row, look down
-			if b := f.Nodes[f.current.Y+1][f.current.X]; !b.Visited {
-				available[count] = b
-				count++
-			}
-		}
+		count = f.updateAvailable()
 
 		if count == 0 {
 			if p := f.current.Parent; p != nil {
@@ -190,10 +131,144 @@ func (f *Field) dfs() {
 			}
 		}
 
-		next := available[rand.Intn(count)]
+		next := f.available[rand.Intn(count)]
 		next.Parent = f.current
 		f.current = next
 	}
+}
+
+// bfs is a breadth-first-search maze generation method
+//
+// It isn't very good. Creates a lot of straight corridors and leaves some empty spaces.
+// Not sure how much of this is my implementation vs the algorithm as a whole.
+// Will have to investigate later.
+func (f *Field) bfs() {
+	f.Start.Visited = true
+	stack := []*node.Node{f.Start}
+	var (
+		count     = 0
+		deferFunc func()
+		animate   func()
+	)
+	defer func() {
+		if deferFunc != nil {
+			deferFunc()
+		}
+	}()
+	for {
+		if f.Animate {
+			if animate == nil {
+				animate, deferFunc = f.animator()
+			}
+			animate()
+		}
+		// grab the front element of the stack
+		f.current = stack[0]
+
+		count = f.updateAvailable()
+		rand.Shuffle(count, func(i, j int) {
+			f.available[i], f.available[j] = func() (*node.Node, *node.Node) { return f.available[j], f.available[i] }()
+		})
+		num := rand.Intn(count + 1)
+		if num == 0 && count > 0 {
+			// if we randomly selected 0, but we have more than 0 items in the count, make sure we are selecting
+			// at least one of these
+			num = 1
+		}
+		for i := 0; i < num; i++ {
+			n := f.available[i]
+			n.Parent = f.current
+			n.Visited = true
+			stack = append(stack, f.available[i])
+		}
+		if len(stack) == 1 {
+			break
+		}
+
+		stack = stack[1:]
+	}
+}
+
+func (f *Field) animator() (animate func(), close func()) {
+	init := false
+	switch f.Output {
+	case output.Image:
+		close = func() {
+			gifFile, err := os.Create("maze.gif")
+			if err != nil {
+				fmt.Println("error saving animation", err)
+				return
+			}
+			defer gifFile.Close()
+			delays := make([]int, len(f.frames))
+			anim := &gif.GIF{Image: f.frames, Delay: delays}
+			if err := gif.EncodeAll(gifFile, anim); err != nil {
+				fmt.Println("error saving animation", err)
+				return
+			}
+		}
+		animate = func() {
+			if err := f.WriteFrame(); err != nil {
+				fmt.Println("error generating frame", err)
+			}
+		}
+	case output.Text:
+		f.cursor.AltBuffer()
+		f.cursor.Hide()
+		close = func() {
+			f.cursor.OriginalBuffer()
+			f.cursor.Show()
+		}
+		animate = func() {
+			if init {
+				f.cursor.Up(f.Height*2 + 1)
+			} else {
+				init = true
+			}
+			time.Sleep(time.Second / 10)
+			if err := f.WriteFrame(); err != nil {
+				fmt.Println("error generating frame", err)
+			}
+		}
+	}
+
+	return animate, close
+}
+
+// updateAvailable will set the available nodes from the current node into the avaiable
+// array. It will return the number of nodes in the available array are relevant to this
+// node.
+func (f *Field) updateAvailable() int {
+	count := 0
+	if f.current.X > 0 {
+		// not in the first column so look left
+		if l := f.Nodes[f.current.Y][f.current.X-1]; !l.Visited {
+			f.available[count] = l
+			count++
+		}
+	}
+	if f.current.X < f.Width-1 {
+		// not in the last column so look right
+		if r := f.Nodes[f.current.Y][f.current.X+1]; !r.Visited {
+			f.available[count] = r
+			count++
+		}
+	}
+	if f.current.Y > 0 {
+		// not in the first row, look up
+		if t := f.Nodes[f.current.Y-1][f.current.X]; !t.Visited {
+			f.available[count] = t
+			count++
+		}
+	}
+	if f.current.Y < f.Height-1 {
+		// not in last row, look down
+		if b := f.Nodes[f.current.Y+1][f.current.X]; !b.Visited {
+			f.available[count] = b
+			count++
+		}
+	}
+	return count
 }
 
 func (f *Field) Repr() [][]uint8 {
@@ -265,7 +340,7 @@ func (f *Field) Repr() [][]uint8 {
 func (f *Field) WriteFrame() error {
 	switch f.Output {
 	case output.Text:
-		f.WriteText()
+		f.writeText(true)
 		return nil
 	case output.Image:
 		f.frames = append(f.frames, f.genImage(true))
@@ -318,6 +393,10 @@ func (f *Field) genImage(colorCurrent bool) *image.Paletted {
 }
 
 func (f *Field) WriteText() {
+	f.writeText(false)
+}
+
+func (f *Field) writeText(colorCurrent bool) {
 	r := f.Repr()
 	for _, row := range r {
 		for _, col := range row {
@@ -327,7 +406,11 @@ func (f *Field) WriteText() {
 			case 1:
 				f.cursor.BlackBG()
 			case 2:
-				f.cursor.RedBG()
+				if colorCurrent {
+					f.cursor.RedBG()
+				} else {
+					f.cursor.BlackBG()
+				}
 			}
 			fmt.Print("  ")
 			f.cursor.Clear()
