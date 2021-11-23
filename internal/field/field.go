@@ -15,15 +15,7 @@ import (
 
 	"github.com/jimmykodes/a_MAZE_ing/internal/node"
 	"github.com/jimmykodes/a_MAZE_ing/internal/output"
-)
-
-type Side int
-
-const (
-	Left Side = iota
-	Right
-	Top
-	Bottom
+	"github.com/jimmykodes/a_MAZE_ing/internal/side"
 )
 
 var red = color.RGBA{R: 255, G: 0, B: 0, A: 255}
@@ -31,7 +23,7 @@ var red = color.RGBA{R: 255, G: 0, B: 0, A: 255}
 type Field struct {
 	Width     int
 	Height    int
-	StartSide Side
+	StartSide side.Side
 	Animate   bool
 	Output    output.Output
 	Start     *node.Node
@@ -41,15 +33,17 @@ type Field struct {
 	frames    []*image.Paletted
 	scale     int
 
+	// gen is the chosen generation function
+	gen func()
+
 	// current is the node currently being examined in the relevant search algorithm
 	current *node.Node
 
-	// available is used to represent the nodes not visited surrounding the current node each node
-	// can at-most have 3 available sides, since at least one side will be the parent node
+	// available is used to represent the nodes not visited surrounding the current node
 	available [4]*node.Node
 }
 
-func New(width, height, scale int, startSide Side, out output.Output, animate bool) *Field {
+func New(width, height, scale int, startSide side.Side, out output.Output, animate bool, function string) *Field {
 	f := &Field{
 		Width:     width,
 		Height:    height,
@@ -59,17 +53,30 @@ func New(width, height, scale int, startSide Side, out output.Output, animate bo
 		StartSide: startSide,
 	}
 	f.cursor = cursor.New(os.Stdout)
+	switch function {
+	case "dfs":
+		f.gen = f.dfs
+	case "bfs":
+		f.gen = f.bfs
+	case "prim":
+		f.gen = f.prim
+	default:
+		f.gen = func() {
+			panic("invalid generation algorithm")
+		}
+	}
+
 	switch startSide {
-	case Left:
+	case side.Left:
 		f.Start = &node.Node{X: 0, Y: rand.Intn(height), IsStart: true}
 		f.End = &node.Node{X: width - 1, Y: rand.Intn(height), IsEnd: true}
-	case Right:
+	case side.Right:
 		f.Start = &node.Node{X: width - 1, Y: rand.Intn(height), IsStart: true}
 		f.End = &node.Node{X: 0, Y: rand.Intn(height), IsEnd: true}
-	case Top:
+	case side.Top:
 		f.Start = &node.Node{X: rand.Intn(width), Y: 0, IsStart: true}
 		f.End = &node.Node{X: rand.Intn(width), Y: height - 1, IsEnd: true}
-	case Bottom:
+	case side.Bottom:
 		f.Start = &node.Node{X: rand.Intn(width), Y: height - 1, IsStart: true}
 		f.End = &node.Node{X: rand.Intn(width), Y: 0, IsEnd: true}
 	}
@@ -91,102 +98,7 @@ func New(width, height, scale int, startSide Side, out output.Output, animate bo
 
 func (f *Field) Gen() {
 	f.current = f.Start
-	f.dfs()
-}
-
-// dfs is a depth-first-search maze generation method
-func (f *Field) dfs() {
-	var (
-		count     = 0
-		deferFunc func()
-		animate   func()
-	)
-	defer func() {
-		if deferFunc != nil {
-			deferFunc()
-		}
-	}()
-	for {
-		f.current.Visited = true
-		if f.Animate {
-			if animate == nil {
-				animate, deferFunc = f.animator()
-			}
-			animate()
-		}
-
-		if f.current.IsEnd {
-			f.current = f.current.Parent
-			continue
-		}
-		// reset count per loop
-		count = f.updateAvailable()
-
-		if count == 0 {
-			if p := f.current.Parent; p != nil {
-				f.current = p
-				continue
-			} else {
-				break
-			}
-		}
-
-		next := f.available[rand.Intn(count)]
-		next.Parent = f.current
-		f.current = next
-	}
-}
-
-// bfs is a breadth-first-search maze generation method
-//
-// It isn't very good. Creates a lot of straight corridors and leaves some empty spaces.
-// Not sure how much of this is my implementation vs the algorithm as a whole.
-// Will have to investigate later.
-func (f *Field) bfs() {
-	f.Start.Visited = true
-	stack := []*node.Node{f.Start}
-	var (
-		count     = 0
-		deferFunc func()
-		animate   func()
-	)
-	defer func() {
-		if deferFunc != nil {
-			deferFunc()
-		}
-	}()
-	for {
-		if f.Animate {
-			if animate == nil {
-				animate, deferFunc = f.animator()
-			}
-			animate()
-		}
-		// grab the front element of the stack
-		f.current = stack[0]
-
-		count = f.updateAvailable()
-		rand.Shuffle(count, func(i, j int) {
-			f.available[i], f.available[j] = func() (*node.Node, *node.Node) { return f.available[j], f.available[i] }()
-		})
-		num := rand.Intn(count + 1)
-		if num == 0 && count > 0 {
-			// if we randomly selected 0, but we have more than 0 items in the count, make sure we are selecting
-			// at least one of these
-			num = 1
-		}
-		for i := 0; i < num; i++ {
-			n := f.available[i]
-			n.Parent = f.current
-			n.Visited = true
-			stack = append(stack, f.available[i])
-		}
-		if len(stack) == 1 {
-			break
-		}
-
-		stack = stack[1:]
-	}
+	f.gen()
 }
 
 func (f *Field) animator() (animate func(), close func()) {
@@ -294,24 +206,24 @@ func (f *Field) Repr() [][]uint8 {
 			}
 			if n.IsStart {
 				switch f.StartSide {
-				case Left:
+				case side.Left:
 					repr[y][x-1] = 1
-				case Right:
+				case side.Right:
 					repr[y][x+1] = 1
-				case Top:
+				case side.Top:
 					repr[y-1][x] = 1
-				case Bottom:
+				case side.Bottom:
 					repr[y+1][x] = 1
 				}
 			} else if n.IsEnd {
 				switch f.StartSide {
-				case Left:
+				case side.Left:
 					repr[y][x+1] = 1
-				case Right:
+				case side.Right:
 					repr[y][x-1] = 1
-				case Top:
+				case side.Top:
 					repr[y+1][x] = 1
-				case Bottom:
+				case side.Bottom:
 					repr[y-1][x] = 1
 				}
 			}

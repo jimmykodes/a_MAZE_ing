@@ -8,16 +8,18 @@ import (
 
 	"github.com/jimmykodes/a_MAZE_ing/internal/field"
 	"github.com/jimmykodes/a_MAZE_ing/internal/output"
+	"github.com/jimmykodes/a_MAZE_ing/internal/side"
 )
 
 var (
 	width      int
 	height     int
-	scale     int
+	scale      int
 	seed       int64
 	outputType string
 	startSide  string
 	animate    bool
+	function   string
 )
 
 func main() {
@@ -28,18 +30,20 @@ func main() {
 	flag.IntVar(&height, "height", 10, "maze height")
 	flag.IntVar(&scale, "scale", 1, "maze scale")
 	flag.Int64Var(&seed, "seed", time.Now().Unix(), "maze seed value")
+	flag.StringVar(&function, "function", "dfs", "maze generation function [dfs | bfs | prim]")
 	flag.Parse()
 	rand.Seed(seed)
-	var ss field.Side
+
+	var ss side.Side
 	switch startSide {
 	case "t", "top":
-		ss = field.Top
+		ss = side.Top
 	case "b", "bottom":
-		ss = field.Bottom
+		ss = side.Bottom
 	case "l", "left":
-		ss = field.Left
+		ss = side.Left
 	case "r", "right":
-		ss = field.Right
+		ss = side.Right
 	default:
 		fmt.Println("invalid start side")
 		return
@@ -53,7 +57,16 @@ func main() {
 		out = output.Text
 	}
 
-	maze := field.New(width, height, scale, ss, out, animate)
+	switch function {
+	case "dfs":
+	case "bfs":
+	case "prim":
+	default:
+		fmt.Println("invalid generation function")
+		return
+	}
+
+	maze := field.New(width, height, scale, ss, out, animate, function)
 	maze.Gen()
 	maze.WriteText()
 	err := maze.WriteImage("maze.png")

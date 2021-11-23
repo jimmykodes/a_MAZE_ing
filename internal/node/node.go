@@ -1,6 +1,8 @@
 package node
 
-import "fmt"
+import (
+	"fmt"
+)
 
 type Node struct {
 	X       int
@@ -9,6 +11,8 @@ type Node struct {
 	IsEnd   bool
 	Visited bool
 	Parent  *Node
+	// Weights
+	Weights map[*Node]float64
 }
 
 func (n Node) IsLeft(n2 *Node) bool {
